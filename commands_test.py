@@ -23,11 +23,16 @@ def main():
         print "  C: Timer"
         print "  D: Recipe"
         print "  E: Misc"
+        print "  *: Run all"
         print "  F: Voice trial"
         print "  X: Exit"
         choice = raw_input("Selection: ")
 
-        if choice == "A":
+        if choice == "*":
+            run_all = True
+        else:
+            run_all = False
+        if choice == "A" or run_all:
             # ------- TEMPERATURE ------- #
             test_value = 45
             test_nlp.chef.set_temp([test_value, " degrees F"])
@@ -38,7 +43,7 @@ def main():
             for test_case in temp_tests:
                 TestCase(test_nlp, test_case)
 
-        elif choice == "B":
+        elif choice == "B" or run_all:
             # ------- WEIGHT ------- #
             test_value = 15
             test_nlp.chef.set_weight([test_value, " oz"])
@@ -47,8 +52,22 @@ def main():
             for test_case in weight_tests:
                 TestCase(test_nlp, test_case)
 
-        elif choice == "C":
+        elif choice == "C" or run_all:
             # ------- TIMER ------- #
+
+            set_timer_tests = ["Set alarm for 3 o'clock",
+                               "Set alarm for 2:30",
+                               "Set alarm for 10:14",
+                               "Set timer for 3 hours and 45 minutes",
+                               "Set timer for 2 and a half hours and 80 minutes",
+                               "Set timer for seconds and three quarters minutes",
+                               "Set timer for minutes",
+                               "Set timer for hours",
+                               "Set timer"
+                               ]
+            for test_case in set_timer_tests:
+                TestCase(test_nlp, test_case)
+
             read_timer_tests = ["How much time is left",
                                 "When will my dish be done",
                                 "What time will my dish finish",
@@ -56,18 +75,7 @@ def main():
             for test_case in read_timer_tests:
                 TestCase(test_nlp, test_case)
 
-            set_timer_tests = ["Set timer for 3 hours and 45 minutes",
-                               "Set timer for 2 and a half hours and 80 minutes",
-                               "Set timer for seconds and three quarters minutes",
-                               "Set timer for minutes",
-                               "Set timer for hours",
-                               "Set timer",
-                               "Set alarm for 3 o'clock",
-                               "Set alarm for 2:30"]
-            for test_case in set_timer_tests:
-                TestCase(test_nlp, test_case)
-
-        elif choice == "D":
+        elif choice == "D" or run_all:
             # ------- RECIPE ------- #
             recipe_tests = ["Next step",
                             "Move to next step",
@@ -80,7 +88,7 @@ def main():
             for test_case in recipe_tests:
                 TestCase(test_nlp, test_case)
 
-        elif choice == "E":
+        elif choice == "E" or run_all:
             # ------- MISCELLANEOUS ------- #
             misc_tests = ["Help me",
                           "How do you cook spaghetti",

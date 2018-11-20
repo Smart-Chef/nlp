@@ -4,18 +4,23 @@ import datetime
 import speech_recognition as sr
 import requests
 import pyttsx
+import json
+from flask import Flask
+import threading
 
 END_VOCAB = ["EXIT", "END PROGRAM", "END", "STOP"]
-COMMAND_VOCAB = ["SET", "TURN", "NEXT", "MOVE", "GO", "PREVIOUS", "LAST", "HELP", "START"]
+COMMAND_VOCAB = ["SET", "TURN", "NEXT", "MOVE", "GO", "PREVIOUS", "LAST", "HELP", "START", "TAKE"]
 TIME_VOCAB = ["TIME", "MINUTES", "HOW LONG", "SECONDS", "HOURS", "HOW MUCH LONGER", "ALARM", "WHEN"]
 TEMP_VOCAB = ["HEAT", "TEMPERATURE", "HOT", "FAHRENHEIT", "DEGREE"]
 WEIGHT_VOCAB = ["WEIGHT", "HEAVY"]
 RECIPE_VOCAB = ["STEP", "DISH", "UTENSIL", "NEED"]
 
+GLOBAL_IP = "10.230.77.127"
 
 class Utensil:
-    def __init__(self, name):
-        self.name = name
+    def __init__(self, _name, _id):
+        self.name = _name
+        self.id = _id
         self.inUse = False
 
 
@@ -26,9 +31,10 @@ class Quantity:
 
 
 class Ingredient:
-    def __init__(self, name, quantity):
-        self.name = name
-        self.quantity = quantity
+    def __init__(self, _name, _quantity, _id):
+        self.name = _name
+        self.quantity = _quantity
+        self.id = _id
 
     def parse_quantity(self, quantity):
         return Quantity(quantity, quantity)
@@ -40,16 +46,18 @@ class Step:
         self.utensils = []
         self.text = []
 
+
 class Value:
-    def __init__(self, _quantity = 0, _units = ""):
+    def __init__(self, _quantity=0, _units=""):
         self.quantity = _quantity
         self.units = _units
 
     def __str__(self):
         return str(self.quantity) + " " + self.units
 
+
 class Timer:
-    def __init__(self, _hours = 0, _minutes = 0, _seconds = 0):
+    def __init__(self, _hours=0, _minutes=0, _seconds=0):
         self.hours = _hours
         self.minutes = _minutes
         self.seconds = _seconds
@@ -76,9 +84,17 @@ class Timer:
     def set_seconds(self, _seconds):
         self.seconds = _seconds
 
+
 class SmartChef:
-    def __init__(self):
+    def __init__(self, _server_ip):
         self.currDish = ""
+        self.server_ip = _server_ip
+        print("Testing server connection...")
+        if not True:  # self.ping_server():
+            print "Server ping failed"
+            #raise(RuntimeError("Cannot connect to server: " + self.server_ip))
+        else:
+            print("Success!")
         self.currStep = 0
         self.utensils = []
         self.ingredients = []
@@ -86,31 +102,152 @@ class SmartChef:
         self.temp = Value()
         self.weight = Value()
         self.timer = Timer()
+        #self.set_timer([0, 0, 30])
+        #z = self.increment_step(1)
+        #x = self.new_recipe()
+        #y = self.set_alarm(datetime.datetime.now()+datetime.timedelta(seconds=30))
+        #print("empty line")
+
+    # Test server connection
+    def ping_server(self):
+        url = "http://" + self.server_ip + ":8001/api/ping"
+        try:
+            response = requests.request("GET", url)
+        except requests.ConnectionError:
+            return False
+        print(response.text)
+        return True
+
+    def get_recipe(self, _recipe_id):
+        url = "http://" + self.server_ip + ":8001/api/recipes/" + str(_recipe_id)
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['data']
+
+    def get_number_steps(self, _recipe_id):
+        return len(self.get_recipe(2)['steps'])
+
+    def get_curr_recipe_id(self):
+        url = "http://" + self.server_ip + ":8001/api/currentStep"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['recipe_id']
+
+    def get_recipe_name(self, _recipe_id):
+        return self.get_recipe(_recipe_id)['title']
+
+    def get_curr_step(self):
+        url = "http://" + self.server_ip + ":8001/api/currentStep"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['current_step']
+
+    def get_curr_recipe(self):
+        url = "http://" + self.server_ip + ":8001/api/currentStep"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['recipe_id']
+
+    def get_prev_step(self):
+        url = "http://" + self.server_ip + ":8001/api/currentStep"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['prev_step']
+
+    def get_next_step(self):
+        url = "http://" + self.server_ip + ":8001/api/currentStep"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['next_step']
+
+    def get_recipe_ingredients(self, _recipe_id):
+        url = "http://" + self.server_ip + ":8001/api/recipes/" + str(_recipe_id) + "/ingredients"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return [ingr['name'] for ingr in response_json['ingredients']]
+
+    def get_step_ingredients(self, _recipe_id, _step_id):
+        url = "http://" + self.server_ip + ":8001/api/recipes/" + str(_recipe_id) + "/ingredients/step/" + str(_step_id)
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        ingredient_list = []
+        for ingr in response_json['ingredients']:
+            new_qty = Quantity(ingr['step_info']['quantity'], ingr['step_info']['unit'])
+            ingredient_list.append(Ingredient(ingr['name'], new_qty, ingr['id']))
+        return ingredient_list
+
+    def get_recipe_utensils(self, _recipe_id):
+        url = "http://" + self.server_ip + ":8001/api/recipes/" + str(_recipe_id) + "/utensils"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        utensil_list = []
+        for utensil in response_json['utensils']:
+            utensil_list.append(Utensil(utensil['name'], utensil['id']))
+        return utensil_list
+
+    def get_step_utensils(self, _recipe_id, _step_id):
+        url = "http://" + self.server_ip + ":8001/api/recipes/" + str(_recipe_id) + "/utensils/step/" + str(_step_id)
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        utensil_list = []
+        for utensil in response_json['utensils']:
+            utensil_list.append(Utensil(utensil['name'], utensil['id']))
+        return utensil_list
+
+    def get_temp(self):
+        url = "http://" + self.server_ip + ":8000/api/getTemp"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['data']
+
+    def get_weight(self):
+        url = "http://" + self.server_ip + ":8000/api/getWeight"
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+        return response_json['data']
+
+    def get_timer(self):
+        # TODO: Get timer from trigger queue
+        return self.timer
+
+    def set_alarm(self, date):
+        url = "http://" + self.server_ip + ":8000/api/add/nlp"
+        date_string = str(date.date())
+        split_time = str(date.time()).split(".")
+        if len(split_time) > 1:
+            time_string = split_time[0] + "+" + split_time[1][0:2] + ":" + split_time[1][2:4]
+        else:
+            time_string = split_time[0] + "+00:00"
+        param = date_string + "T" + time_string
+        payload = {
+            "service": "nlp",
+            "action_key": "mockAction",
+            "action_params": {
+                "timer_finished": "False"
+            },
+            "trigger_keys": [
+                "timer"
+            ],
+            "trigger_params": [
+                param  # "2018-11-15T22:18:41+00:00"
+            ]
+        }
+        headers = {'Content-Type': 'application/json'}
+        response = requests.request("POST", url, data=payload, headers=headers)
+        response_json = json.loads(response.text)
+        return response_json['data']
 
     def set_timer(self, time_array):
         hours = time_array[0]
         minutes = time_array[1]
         seconds = time_array[2]
-        self.timer.set_hours(hours)
-        self.timer.set_minutes(minutes)
-        self.timer.set_seconds(seconds)
         print "Setting timer:"
         print "HOURS: " + str(hours)
         print "MINUTES: " + str(minutes)
         print "SECONDS: " + str(seconds)
-
-    def get_temp(self):
-        url = "http://10.231.75.28:8000/api/getTemp"
-        response = "Test" #requests.request("GET", url)
-        return response #.text
-
-    def get_weight(self):
-        url = "http://10.231.75.28:8000/api/getWeight"
-        response = "Test" #requests.request("GET", url)
-        return response #.text
-
-    def get_timer(self):
-        return self.timer
+        date_difference = datetime.timedelta(hours=hours, minutes=minutes, seconds=seconds)
+        date = datetime.datetime.now() + date_difference
+        self.set_alarm(date)
 
     def set_temp(self, _temp):
         print "Setting temp:"
@@ -122,12 +259,31 @@ class SmartChef:
         self.weight = Value(_weight[0], _weight[1])
         print str(_weight[0]) + _weight[1]
 
+    def new_recipe(self):
+        url = "http://" + self.server_ip + ":8001/api/initialize"
+        payload = "{\"id\":1}"
+        headers = {'Content-Type': 'application/json'}
+        response = requests.request("POST", url, data=payload, headers=headers)
+        response_json = json.loads(response.text)
+        return response_json['status'] == "success"
+
     def increment_step(self, increment_by):
-        url = "http://10.231.75.28:8001/api/increment-step"
+        url = "http://localhost:5000/send_message/<here we goooo!>"
         payload = "{\"increment_steps\": " + str(increment_by) + "}"
         headers = {'Content-Type': 'application/json'}
-        response = "Test" #requests.request("POST", url, data=payload, headers=headers)
-        return response #.text
+        response = requests.request("GET", url)
+        response_json = json.loads(response.text)
+
+        url = "http://" + self.server_ip + ":8001/api/increment-step"
+        payload = "{\"increment_steps\": " + str(increment_by) + "}"
+        headers = {'Content-Type': 'application/json'}
+        response = requests.request("POST", url, data=payload, headers=headers)
+        response_json = json.loads(response.text)
+        if response_json['status'] == "INVALID":
+            raise RuntimeError("No active recipe")
+        elif response_json['status'] == "success":
+            # Return text for next step
+            return response_json['step_info']
 
 
 class ParsingError(RuntimeError):
@@ -138,14 +294,34 @@ class ParsingError(RuntimeError):
         return self.text
 
 
+# Class containing all NLP operations and command dispatching
 class NLP:
+    # Initialize
     def __init__(self):
         self.r = sr.Recognizer()
         self.mic = sr.Microphone()
-        self.chef = SmartChef()
+        self.chef = SmartChef(GLOBAL_IP)
+        self.server = self.server_setup()
+        self.server_thread = self.run_server()
         self.translation = ""
         self.speaker = pyttsx.init()
+        self.chef.increment_step(1)
 
+    def server_setup(self):
+        app = Flask(__name__)
+
+        @app.route('/send_message/<msg>')
+        def hello_world(msg):
+            self.annunciate(msg)
+            return "Pong"
+        return app
+
+    def run_server(self):
+        thread = threading.Thread(target=self.server.run)
+        thread.start()
+        return thread
+
+    # Run full NLP loop
     def run_nlp(self):
         while self.translation.upper() not in END_VOCAB:
             while "HEY CHEF" not in self.translation.upper():
@@ -154,15 +330,19 @@ class NLP:
             self.translation = self.speech_to_text()
             self.parse_command(self.translation)
 
-    def speech_to_text(self, ignition_phrase = False):
+    # Record audio and attempt to translate to text
+    def speech_to_text(self, ignition_phrase=False):
         try:
             with self.mic as source:
                 # ---- Translate input ---- #
                 print "\nAdjusting for ambient noise..."
                 self.r.adjust_for_ambient_noise(source)
                 print "Listening..."
-                #audio = self.r.listen(source, snowboy_configuration=["C:\Python27\Lib\site-packages\snowboy-1.2.0b1-py2.7.egg\snowboy", ["C:/Users/shfat/Documents/2018_Fall/CSCE_483/NLPTest/VoiceRecognition/hotword_models/HEY CHEF.pmdl"]])  # timeout after 5 seconds
-                audio = self.r.listen(source, 5.0)
+                if ignition_phrase:
+                    audio = self.r.listen(source, timeout=3.0, phrase_time_limit=3.0)
+                    # audio = self.r.listen(source, snowboy_configuration=["C:\Python27\Lib\site-packages\snowboy-1.2.0b1-py2.7.egg\snowboy", ["C:/Users/shfat/Documents/2018_Fall/CSCE_483/NLPTest/VoiceRecognition/hotword_models/HEY CHEF.pmdl"]])  # timeout after 5 seconds
+                else:
+                    audio = self.r.listen(source, timeout=3.0, phrase_time_limit=3.0)
                 print "Got it! Translating..."
                 return self.r.recognize_google(audio)
                 #file = open("desktop.txt", "a")
@@ -171,7 +351,12 @@ class NLP:
             if not ignition_phrase:
                 self.annunciate("I did not understand you")
             return ""
+        except sr.RequestError:
+            if not ignition_phrase:
+                self.annunciate("Recognition request failed")
+            return ""
 
+    # Provide text and audio response to user
     def annunciate(self, response, time=""):
         if time != "":
             time_split = time.split(":")
@@ -182,10 +367,12 @@ class NLP:
         print response
         self.text_to_speech(response)
 
+    # Translate text to audio output
     def text_to_speech(self, text):
         self.speaker.say(text)
         self.speaker.runAndWait()
 
+    # Test if string is fully numeric
     def is_numeric(self, my_string):
         try:
             float(my_string)
@@ -193,18 +380,24 @@ class NLP:
         except ValueError:
             return False
 
+    # Convert time array to float
     def time_to_float(self, time):
         time_float = time[0] * 60.0
         time_float = (time_float + time[1]) * 60.0
         time_float += time[2]
         return time_float
 
+    # Parse input command and convert time value to time array
     def get_time_value(self, command_split):
         hours = 0
         minutes = 0
         seconds = 0
         units_array = ["hours", "minutes", "seconds"]
-        for index, word in enumerate(command_split):
+        for word_index, word in enumerate(command_split):
+            if word == "O'CLOCK":
+                command_split[word_index-1] = command_split[word_index-1] + ":00"
+                command_split.pop(word_index)
+        for word in command_split:
             if ":" in word:
                 word_split = word.split(":")
                 numeric = True
@@ -215,10 +408,19 @@ class NLP:
                 if numeric:
                     # Set all available values
                     for index in range(len(word_split)):
-                        eval(units_array[index] + " = " + word_split[index])
+                        exec(units_array[index] + " = " + word_split[index])
                     break
-        return [hours, minutes, seconds]
+        now = datetime.datetime.now()
+        days = now.day
+        # Adjust for AM/PM
+        if now.hour > 12 and hours < 12:
+            if (hours+12) > now.hour:
+                hours = hours + 12
+            else:
+                days = now.day + 1
+        return datetime.datetime(year=now.year, month=now.month, day=days, hour=hours, minute=minutes, second=seconds, microsecond=0)
 
+    # Parse command for duration values to build time array
     def get_duration_value(self, command_split):
         hours = 0
         minutes = 0
@@ -267,11 +469,13 @@ class NLP:
             raise(ParsingError("No time values"))
         return [final_hours, final_minutes, final_seconds]
 
+    # Parse input command for temperature value
     def get_temp_value(self, command_split):
         for index, word in enumerate(command_split):
             if word == "DEGREES" or word == "FAHRENHEIT":
                 return [int(command_split[index-1]), " " + word]
 
+    # Parse input command for a given value type
     def get_value(self, command_split, setting):
         if setting == "duration":
             try:
@@ -290,7 +494,7 @@ class NLP:
         else:
             raise(RuntimeError("Invalid setting"))
 
-
+    # Clean all numeric words to digits
     def clean_numbers(self, command):
         word_numbers = {" ONE ": " 1 ",
                         " TWO ": " 2 ",
@@ -358,9 +562,12 @@ class NLP:
         print "WITH CLEAN NUMBERS: " + command
         return command
 
+    # Interpret command and dispatch appropriately
     def parse_command(self, text, test = False):
         # ---- Interpreter ---- #
         try:
+            if text == "":
+                return
             setting = "unknown"
             usage = "unknown"
             print text
@@ -369,6 +576,8 @@ class NLP:
             command_split = command.split()
             if "START RECIPE" in command or "NEW RECIPE" in command:
                 self.annunciate("New recipe")
+                if self.chef.new_recipe():
+                    self.annunciate("What would you like to make?")
                 # Initialize new recipe
                 # Ask which recipe to make
 
@@ -415,7 +624,9 @@ class NLP:
             if request_type == "command":
                 if setting == "time":
                     if usage == "time":
-                        self.annunciate("TO DO: Set alarm")
+                        self.annunciate("Set alarm")
+                        value = self.get_value(command_split, "time")
+                        self.chef.set_alarm(value)
                     elif usage == "duration":
                         value = self.get_value(command_split, "duration")
                         self.chef.set_timer(value)
@@ -432,11 +643,9 @@ class NLP:
                     self.annunciate("Set temp to " + str(value[0]) + value[1])
                 elif setting == "recipe":
                     if "NEXT" in command:
-                        self.annunciate("TODO: Move to next step")
-                        self.chef.increment_step(1)
+                        self.annunciate(self.chef.increment_step(1))
                     elif "LAST" in command or "PREVIOUS" in command:
-                        self.annunciate("TODO: Move to previous step")
-                        self.chef.increment_step(-1)
+                        self.annunciate(self.chef.increment_step(-1))
                 elif setting == "search":
                     #FIXME: Google search
                     self.annunciate("TODO: Add searching... ")
@@ -462,12 +671,22 @@ class NLP:
                 elif setting == "recipe":
                     if usage == "step":
                         if "NEXT" in command:
-                            self.annunciate("TODO: Give next step: ")
+                            next_step = self.chef.get_next_step()
+                            self.annunciate("Next step: " + next_step['data'])
                         elif "LAST" in command or "PREVIOUS" in command:
-                            self.annunciate("TODO: Give previous step: ")
+                            prev_step = self.chef.get_prev_step()
+                            self.annunciate("Previous step: " + prev_step['data'])
+                        elif "CURRENT" in command:
+                            curr_step = self.chef.get_curr_step()
+                            self.annunciate(curr_step['data'])
                     elif usage == "supplies":
                         if "INGREDIENTS" in command:
-                            self.annunciate("TODO: Give step ingredients")
+                            recipe_id = self.chef.get_curr_recipe()['id']
+                            step_id = self.chef.get_curr_step()['id']
+                            ingredients_list = self.chef.get_step_ingredients(recipe_id, step_id)
+                            ingredients = [ingr.name for ingr in ingredients_list]
+                            self.annunciate("Ingredients: " + ingredients.join(', '))
+                            self.chef.get_step_ingredients()
                         elif "UTENSILS" in command or "TOOLS" in command:
                             self.annunciate("TODO: Give step utensils")
                         else:
