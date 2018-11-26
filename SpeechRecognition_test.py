@@ -138,9 +138,9 @@ class SmartChef:
         self.currDish = ""
         self.server_ip = _server_ip
         print("Testing server connection...")
-        if not True:  # self.ping_server():
+        if not self.ping_server():
             print "Server ping failed"
-            #raise(RuntimeError("Cannot connect to server: " + self.server_ip))
+            raise(RuntimeError("Cannot connect to server: " + self.server_ip))
         else:
             print("Success!")
         self.stove = StoveDriver()
@@ -451,14 +451,14 @@ class NLP:
             subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=44100','--file-type=wav','recording1.wav','-c', '2'])
             self.recording1_new = True
         else:
-            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=44100','--file-type=wav','recording2.wav', '-c', '2'])
+            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=44100','--file-type=wav','recording2.wav','-c','2'])
             self.recording2_new = True
         # Alternate audio files
         self.first_file = not self.first_file
         #subprocess.call(['aplay','--format=S16_LE','--rate=16000','out.wav'])
 
     def record_command(self):
-        subprocess.call(['arecord','--format=S16_LE','--duration=5','--rate=16000','--file-type=wav','command.wav'])
+        subprocess.call(['arecord','--format=S16_LE','--duration=5','--rate=44100','--file-type=wav','command.wav','-c','2'])
         with sr.AudioFile('command.wav') as source:
                 audio = self.r.listen(source)
         return self.speech_to_text(audio)
