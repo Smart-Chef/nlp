@@ -388,6 +388,7 @@ class NLP:
 
     def init_server_thread(self):
         thread = threading.Thread(target=self.run_server)
+        thread.setDaemon(True)
         thread.start()
         return thread
 
