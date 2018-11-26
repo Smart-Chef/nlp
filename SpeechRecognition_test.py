@@ -502,6 +502,7 @@ class NLP:
             command = ""
             while command == "":
                 command = self.record_command()
+                self.parse_command(command)
             if "exit program" in command:
                 self.exit_process = True
                 return
