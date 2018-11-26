@@ -448,10 +448,10 @@ class NLP:
             print "Resuming autorecord"
             self.autorecord_paused = False
         if self.first_file:
-            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=16000','--file-type=wav','recording1.wav'])
+            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=44100','--file-type=wav','recording1.wav','-c', '2'])
             self.recording1_new = True
         else:
-            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=16000','--file-type=wav','recording2.wav'])
+            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=44100','--file-type=wav','recording2.wav', '-c', '2'])
             self.recording2_new = True
         # Alternate audio files
         self.first_file = not self.first_file
