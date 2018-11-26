@@ -1,5 +1,5 @@
 
-
+import os
 import datetime
 import speech_recognition as sr
 import requests
@@ -7,6 +7,11 @@ import pyttsx
 import json
 from flask import Flask
 import threading
+from time import sleep
+import signal
+import math
+#import RPi.GPIO as GPIO
+import subprocess
 
 END_VOCAB = ["EXIT", "END PROGRAM", "END", "STOP"]
 COMMAND_VOCAB = ["SET", "TURN", "NEXT", "MOVE", "GO", "PREVIOUS", "LAST", "HELP", "START", "TAKE"]
@@ -47,6 +52,42 @@ class Step:
         self.text = []
 
 
+class StoveDriver:
+    def __init__(self):
+        self.pin_assignments = {"keep_warm": None,
+                                "medium": None,
+                                "high": None,
+                                "decrease": None,
+                                "increase": None,
+                                "start": None}
+        self.GPIO_setup(self.pin_assignments.values())
+
+    def GPIO_setup(self, pin_list):
+        print "Set up GPIO"
+        #GPIO.setmode(GPIO.BCM)
+        #GPIO.setwarnings(False)
+        #for pin in pin_list:
+        #    GPIO.setup(pin, GPIO.OUT)
+        #    GPIO.output(pin, GPIO.HIGH)  # Close relay
+
+    def set_temp(self, temp):
+        print "Setting temp to " + str(temp) + " degrees"
+
+    def press_button(self, button):
+        try:
+            self.blink_pin(self.pin_assignments[button])
+        except KeyError:
+            print "ERROR!: " + button + " is an invalid button"
+
+    def blink_pin(self, pin):
+        self.GPIO_setup(self.pin_assignments.values())
+        print "Blink pin " + str(pin)
+        #GPIO.output(pin, GPIO.LOW)
+        #sleep(0.1)
+        #GPIO.output(pin, GPIO.HIGH)
+        #GPIO.cleanup()
+
+
 class Value:
     def __init__(self, _quantity=0, _units=""):
         self.quantity = _quantity
@@ -84,6 +125,13 @@ class Timer:
     def set_seconds(self, _seconds):
         self.seconds = _seconds
 
+class Speaker:
+    def __init__(self):
+        self.engine = pyttsx.init()
+
+    def run(self, text):
+        self.engine.say(text)
+        self.engine.runAndWait()
 
 class SmartChef:
     def __init__(self, _server_ip):
@@ -95,6 +143,7 @@ class SmartChef:
             #raise(RuntimeError("Cannot connect to server: " + self.server_ip))
         else:
             print("Success!")
+        self.stove = StoveDriver()
         self.currStep = 0
         self.utensils = []
         self.ingredients = []
@@ -251,7 +300,7 @@ class SmartChef:
 
     def set_temp(self, _temp):
         print "Setting temp:"
-        self.temp = Value(_temp[0], _temp[1])
+        self.stove.set_temp(_temp[0])
         print str(_temp[0]) + _temp[1]
 
     def set_weight(self, _weight):
@@ -268,12 +317,6 @@ class SmartChef:
         return response_json['status'] == "success"
 
     def increment_step(self, increment_by):
-        url = "http://localhost:5000/send_message/<here we goooo!>"
-        payload = "{\"increment_steps\": " + str(increment_by) + "}"
-        headers = {'Content-Type': 'application/json'}
-        response = requests.request("GET", url)
-        response_json = json.loads(response.text)
-
         url = "http://" + self.server_ip + ":8001/api/increment-step"
         payload = "{\"increment_steps\": " + str(increment_by) + "}"
         headers = {'Content-Type': 'application/json'}
@@ -286,14 +329,6 @@ class SmartChef:
             return response_json['step_info']
 
 
-class ParsingError(RuntimeError):
-    def __init__(self, _text):
-        self.text = _text
-
-    def __str__(self):
-        return self.text
-
-
 # Class containing all NLP operations and command dispatching
 class NLP:
     # Initialize
@@ -302,36 +337,176 @@ class NLP:
         self.mic = sr.Microphone()
         self.chef = SmartChef(GLOBAL_IP)
         self.server = self.server_setup()
-        self.server_thread = self.run_server()
+        self.pid = os.getpid()
+        signal.signal(signal.SIGINT, self.server_message_handler)
+        self.exit_process = False
+        self.first_file = True
+        self.recording1_new = False
+        self.recording2_new = False
+        self.autorecord_thread = None
+        self.pause_autorecord_flag = False
+        self.autorecord_paused = False
+        self.server_thread = self.init_server_thread()
         self.translation = ""
-        self.speaker = pyttsx.init()
-        self.chef.increment_step(1)
+        self.speaker = pyttsx.init()  # TODO: Obsolete
+        self.message_queue = []
+        self.message_queue_lock = False
+        self.audio_file_1 = sr.AudioFile('recording1.wav')
+        self.audio_file_2 = sr.AudioFile('recording2.wav')
+        self.command_audio = sr.AudioFile('command.wav')
+        #self.chef.increment_step(1)
+
+    def write_message_queue(self, msg):
+        self.message_queue_lock = True
+        self.message_queue.append(msg)
+        self.message_queue_lock = False
+
+    def read_message_queue(self):
+        while self.message_queue_lock:
+            sleep(1)
+        return self.message_queue
+
+    def check_for_messages(self):
+        for msg in self.read_message_queue():
+            self.annunciate(msg)
+        self.clear_message_queue()
+
+    def clear_message_queue(self):
+        while self.message_queue_lock:
+            sleep(1)
+        self.message_queue = []
 
     def server_setup(self):
         app = Flask(__name__)
 
         @app.route('/send_message/<msg>')
-        def hello_world(msg):
-            self.annunciate(msg)
+        def receive_message(msg):
+            # self.annunciate(msg)
+            self.write_message_queue(msg)
             return "Pong"
         return app
 
-    def run_server(self):
-        thread = threading.Thread(target=self.server.run)
+    def init_server_thread(self):
+        thread = threading.Thread(target=self.run_server)
         thread.start()
         return thread
+
+    def run_server(self):
+        self.server.run(host='0.0.0.0')
 
     # Run full NLP loop
     def run_nlp(self):
         while self.translation.upper() not in END_VOCAB:
             while "HEY CHEF" not in self.translation.upper():
-                self.translation = self.speech_to_text(ignition_phrase=True)
+                self.check_for_messages()
+                self.translation = self.DEPR_speech_to_text(ignition_phrase=True)
             self.annunciate("What do you want?")
-            self.translation = self.speech_to_text()
+            self.translation = self.DEPR_speech_to_text()
             self.parse_command(self.translation)
 
+    def run_NLP_multithread(self):
+        self.exit_process = False
+        print ("Initializing autorecord thread")
+        self.autorecord_thread = threading.Thread(target=self.endless_record)
+        self.autorecord_thread.start()
+        self.endless_process()
+        print "Waiting for autorecord thread"
+        self.autorecord_thread.join()
+
+    def endless_record(self):
+        print ("Beginning endless record")
+        while not self.exit_process:
+            print "  <-- RECORDING -->  "
+            self.record_audio()
+            print "  <-- DONE -->  "
+        print "End audio recording thread"
+
+    def endless_process(self):
+        print ("Beginning endless process")
+        while not self.exit_process:
+            print "  -- PROCESSING --  "
+            audio = self.get_autorecord()
+            text = self.speech_to_text(audio)
+            if text != "":
+                self.process_text(text)
+        print "End speech_to_text thread"
+
+    def record_audio(self):
+        # Pause autorecord if processing needs mic resources
+        if self.pause_autorecord_flag:
+            print "Auto record pausing"
+            self.autorecord_paused = True
+            # Wait until processing unit is done
+            while self.pause_autorecord_flag:
+                if self.exit_process:
+                    return
+                sleep(0.1)
+            print "Resuming autorecord"
+            self.autorecord_paused = False
+        if self.first_file:
+            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=16000','--file-type=wav','recording1.wav'])
+            self.recording1_new = True
+        else:
+            subprocess.call(['arecord','--format=S16_LE','--duration=4','--rate=16000','--file-type=wav','recording2.wav'])
+            self.recording2_new = True
+        # Alternate audio files
+        self.first_file = not self.first_file
+        #subprocess.call(['aplay','--format=S16_LE','--rate=16000','out.wav'])
+
+    def record_command(self):
+        subprocess.call(['arecord','--format=S16_LE','--duration=5','--rate=16000','--file-type=wav','command.wav'])
+        with sr.AudioFile('command.wav') as source:
+                audio = self.r.listen(source)
+        return self.speech_to_text(audio)
+
+    def get_autorecord(self):
+        while not (self.recording1_new or self.recording2_new):
+            print "Waiting for new recording..."
+            sleep(0.1)
+        audio = None
+        if self.recording1_new:
+            print "Reading recording 1"
+            with sr.AudioFile('recording1.wav') as source:
+                audio = self.r.listen(source)
+            self.recording1_new = False
+        elif self.recording2_new:
+            print "Reading recording 2"
+            with sr.AudioFile('recording2.wav') as source:
+                audio = self.r.listen(source)
+            self.recording2_new = False
+        return audio
+
+    def speech_to_text(self, audio):
+        print ("Translating...")
+        try:
+            text = self.r.recognize_google(audio)
+            print "TEXT: " + text
+        except sr.UnknownValueError:
+            text = ""
+            print "ERROR: Unknown value"
+        return text
+
+    def process_text(self, text):
+        if "okay cook" in text:
+            print "Text recognized!"  # TODO: Add a *ding*
+            self.pause_autorecord_flag = True
+            self.text_to_speech("What would you like to do?")
+            print "Waiting to pause autorecord..."
+            while not self.autorecord_paused:
+                sleep(0.1)
+            print "Autorecord paused"
+            command = ""
+            while command == "":
+                command = self.record_command()
+            if "exit program" in command:
+                self.exit_process = True
+                return
+            else:
+                self.text_to_speech("Could not recognize command")
+            self.pause_autorecord_flag = False
+
     # Record audio and attempt to translate to text
-    def speech_to_text(self, ignition_phrase=False):
+    def DEPR_speech_to_text(self, ignition_phrase=False):
         try:
             with self.mic as source:
                 # ---- Translate input ---- #
@@ -339,7 +514,8 @@ class NLP:
                 self.r.adjust_for_ambient_noise(source)
                 print "Listening..."
                 if ignition_phrase:
-                    audio = self.r.listen(source, timeout=3.0, phrase_time_limit=3.0)
+                    audio = self.r.listen(source)
+                    #audio = self.r.listen(source, timeout=3.0, phrase_time_limit=3.0)
                     # audio = self.r.listen(source, snowboy_configuration=["C:\Python27\Lib\site-packages\snowboy-1.2.0b1-py2.7.egg\snowboy", ["C:/Users/shfat/Documents/2018_Fall/CSCE_483/NLPTest/VoiceRecognition/hotword_models/HEY CHEF.pmdl"]])  # timeout after 5 seconds
                 else:
                     audio = self.r.listen(source, timeout=3.0, phrase_time_limit=3.0)
@@ -366,11 +542,26 @@ class NLP:
             response += hours + " " + minutes + " and " + seconds + " seconds"
         print response
         self.text_to_speech(response)
+        print "Done with text_to_speech"
+
+    def wait_error_handler(self, signum, frame):
+        raise RuntimeError("Error: Waited too long...")
+
+    def server_message_handler(self, signum, frame):
+        self.check_for_messages()
 
     # Translate text to audio output
     def text_to_speech(self, text):
-        self.speaker.say(text)
-        self.speaker.runAndWait()
+        speaker_obj = Speaker()
+        #signal.signal(signal.SIGALRM, self.wait_error_handler)
+        #try:
+        #    signal.alarm(3)
+        #    speaker_obj.run(text)
+        #    signal.alarm(0)
+        #except RuntimeError as e:
+        #    print e
+        speaker_obj.run(text)
+        del(speaker_obj)
 
     # Test if string is fully numeric
     def is_numeric(self, my_string):
@@ -440,7 +631,7 @@ class NLP:
                     minutes_add = int(minutes_decimal)
                     seconds_add = int((float(minutes_decimal) - minutes_add) * 60)
                 else:
-                    raise(ParsingError("No valid hours value"))
+                    raise(RuntimeError("No valid hours value"))
             elif "MINUTE" in word:
                 value_string = command_split[index - 1]
                 if value_string.isdigit():
@@ -449,13 +640,13 @@ class NLP:
                     minutes_add = int(float(minutes_add))
                     seconds_add = int((float(value_string) - minutes_add) * 60)
                 else:
-                    raise(ParsingError("No valid minutes value"))
+                    raise(RuntimeError("No valid minutes value"))
             elif "SECOND" in word:
                 value_string = command_split[index - 1]
                 if value_string.isdigit():
                     seconds_add = int(value_string)
                 else:
-                    raise(ParsingError("No valid seconds value"))
+                    raise(RuntimeError("No valid seconds value"))
             hours += hours_add
             minutes += minutes_add
             seconds += seconds_add
@@ -466,7 +657,7 @@ class NLP:
             final_minutes = minutes % 60
             final_hours = hours + int(minutes / 60.0)
         else:
-            raise(ParsingError("No time values"))
+            raise(RuntimeError("No time values"))
         return [final_hours, final_minutes, final_seconds]
 
     # Parse input command for temperature value
@@ -480,13 +671,13 @@ class NLP:
         if setting == "duration":
             try:
                 return self.get_duration_value(command_split)
-            except ParsingError as e:
+            except RuntimeError as e:
                 self.annunciate("Error: " + str(e))
                 raise(RuntimeError("Error reading duration"))
         elif setting == "time":
             try:
                 return self.get_time_value(command_split)
-            except ParsingError as e:
+            except RuntimeError as e:
                 self.annunciate("Error: " + str(e))
                 raise(RuntimeError("Error reading time"))
         elif setting == "temp":
