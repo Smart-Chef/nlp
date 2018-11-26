@@ -430,6 +430,7 @@ class NLP:
             print "  -- PROCESSING --  "
             audio = self.get_autorecord()
             text = self.speech_to_text(audio)
+            print "Translation: " + text
             if text != "":
                 self.process_text(text)
         print "End speech_to_text thread"

@@ -25,6 +25,7 @@ def main():
         print "  E: Misc"
         print "  *: Run all"
         print "  F: Voice trial"
+        print "  G: Multithread voice trial"
         print "  X: Exit"
         choice = raw_input("Selection: ")
 
@@ -99,5 +100,8 @@ def main():
 
         elif choice == "F":
             test_nlp.run_nlp()
+
+        elif choice == "G":
+            test_nlp.run_NLP_multithread()
 
 main()
