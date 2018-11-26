@@ -401,8 +401,10 @@ class NLP:
             while "HEY CHEF" not in self.translation.upper():
                 self.check_for_messages()
                 self.translation = self.DEPR_speech_to_text(ignition_phrase=True)
+                print "Translation: " + self.translation
             self.annunciate("What do you want?")
             self.translation = self.DEPR_speech_to_text()
+            print "Translation: " + self.translation
             self.parse_command(self.translation)
 
     def run_NLP_multithread(self):
