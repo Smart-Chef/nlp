@@ -20,7 +20,7 @@ TEMP_VOCAB = ["HEAT", "TEMPERATURE", "HOT", "FAHRENHEIT", "DEGREE"]
 WEIGHT_VOCAB = ["WEIGHT", "HEAVY"]
 RECIPE_VOCAB = ["STEP", "DISH", "UTENSIL", "NEED"]
 
-GLOBAL_IP = "10.230.77.127"
+GLOBAL_IP = "localhost"
 
 class Utensil:
     def __init__(self, _name, _id):
